@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>LDA (LD-1, LD-2 & LD-203) — Company View</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{--border:#e5e7eb;--muted:#6b7280;--ok:#065f46;--warn:#92400e;--bg:#f8fafc;--card:#ffffff}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f3f4f6;color:#111827}
+  .container{max-width:1200px;margin:24px auto;padding:0 16px}
+  h1{margin:0 0 12px;font-size:24px}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+  label{display:flex;flex-direction:column;gap:6px;font-size:14px}
+  input,button{font:inherit;padding:10px 12px}
+  input{min-width:260px;border:1px solid var(--border);border-radius:10px;background:#fff}
+  button{cursor:pointer;border:1px solid var(--border);border-radius:10px;background:#fff}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .panel{border:1px solid var(--border);border-radius:14px;padding:16px;margin:16px 0;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .panel h2{margin:0 0 8px;font-size:18px}
+  .note{color:var(--muted);font-size:12px;margin:4px 0 10px}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+  .chip{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:12px;margin-right:6px;margin-top:4px}
+  .chip.ok{border-color:#34d399;background:#ecfdf5;color:var(--ok)}
+  .chip.warn{border-color:#f59e0b;background:#fffbeb;color:var(--warn)}
+  table{width:100%;border-collapse:collapse;table-layout:auto}
+  th,td{border-top:1px solid var(--border);padding:8px;vertical-align:top}
+  thead th{border-top:none;background:var(--bg);text-align:left}
+  tbody tr:nth-child(2n){background:#fcfcfd}
+  td.right,th.right{text-align:right}
+  .exports{display:flex;gap:8px}
+  .quick a{margin-right:10px}
+  .muted{color:var(--muted)}
+  .expander{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:#f8fafc}
+  .ld1-detail{background:#fafafa;border:1px dashed var(--border);border-radius:8px;padding:10px;margin:6px 0}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .kv{display:flex;gap:6px}
+  .kv b{min-width:220px}
+  .tag{display:inline-block;border:1px solid var(--border);border-radius:6px;padding:2px 6px;margin:2px 4px 2px 0;font-size:12px}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>LDA (LD-1, LD-2 & LD-203) — Company View</h1>
+
+
+  <div class="panel">
+    <div class="row">
+      <label>Worker Base URL
+        <input id="baseUrl" value="https://mydistrict-proxy.bryan-schafer.workers.dev" />
+      </label>
+      <label>Company / Client (exact or close)
+        <input id="company" value="Pfizer" />
+      </label>
+      <label>Year From (optional)
+        <input id="yearFrom" placeholder="e.g. 2018" />
+      </label>
+      <label>Year To (optional)
+        <input id="yearTo" placeholder="e.g. 2025" />
+      </label>
+    </div>
+    <div class="row" style="margin-top:10px;gap:8px">
+      <button id="run" type="button">Run LDA</button>
+      <button id="reset" type="button">Reset</button>
+      <span class="note">All requests go through your Worker so your LDA API key/headers are used.</span>
+      <span id="bootChip" class="chip ok" hidden>Boot OK</span>
+    </div>
+  </div>
+
+
+  <div class="panel">
+    <h2>Quick Links</h2>
+    <div class="quick note">
+      <div><b>Public testers (HTML):</b></div>
+      <div id="publicLinks"></div>
+      <div style="margin-top:6px"><b>Your Worker testers (JSON):</b></div>
+      <div id="apiLinks"></div>
+    </div>
+  </div>
+
+
+  <div id="err" class="panel" style="border-color:#b91c1c;background:#fff5f5;color:#b91c1c" hidden></div>
+
+
+  <div class="panel">
+    <h2>Request Log</h2>
+    <div id="log" class="mono" style="font-size:12px"></div>
+  </div>
+
+
+  <!-- LD-1 Registrations -->
+  <div class="panel" id="ld1Panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <h2>LD-1 Registrations</h2>
+      <div class="exports">
+        <button id="ld1Csv" type="button">CSV</button>
+        <button id="ld1Json" type="button">JSON</button>
+      </div>
+    </div>
+    <div class="note">Each row can be expanded to show the structured form content (addresses, IDs, issues, lobbyists, agencies, amounts, signature).</div>
+    <div id="ld1Chips" class="row"></div>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Year / Type</th>
+          <th>Registrant</th>
+          <th>Client</th>
+          <th>Posted</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody id="ld1Body"></tbody>
+    </table>
+  </div>
+
+
+  <!-- LD-2 Spending -->
+  <div class="panel" id="spendPanel">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <h2>LD-2 Spending (Lobbying)</h2>
+      <div class="exports">
+        <button id="spendCsv" type="button">CSV</button>
+        <button id="spendJson" type="button">JSON</button>
+      </div>
+    </div>
+    <div id="spendChips" class="row"></div>
+    <div class="note">
+      Computes <b>In-house Expenses</b> where <i>registrant.name ≈ company</i> and
+      <b>Hired-Firm Income</b> where <i>client.name ≈ company</i>. Self-registrant filings are counted as <i>in-house only</i>.
+    </div>
+
+
+    <h3 style="margin:10px 0 6px">By Period</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th class="right">In-house (Expenses)</th>
+          <th class="right">Hired Firms (Income)</th>
+          <th class="right">Total</th>
+          <th class="right">Filings</th>
+        </tr>
+      </thead>
+      <tbody id="spendByPeriod"></tbody>
+    </table>
+
+
+    <h3 style="margin:14px 0 6px">Outside Registrants Paid (Client = Company)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Registrant (Firm)</th>
+          <th class="right">Income</th>
+          <th class="right">Filings</th>
+        </tr>
+      </thead>
+      <tbody id="spendByFirm"></tbody>
+    </table>
+  </div>
+
+
+</div>
+
+
+<script>
+(function(){
+  // ----- tiny helper -----
+  const $ = id => document.getElementById(id);
+
+
+  // Global state (LD-1 & LD-2 only)
+  const state = {
+    ld1: { rows: [], details: new Map() },
+    spend: { totals:{inhouse:0,hired:0,all:0}, byPeriod:[], byFirm:[], raw:[] }
+  };
+
+
+  // ----- UI helpers -----
+  function params(){
+    return {
+      base: $('baseUrl').value.replace(/\/$/,''),
+      company: $('company').value.trim(),
+      yearFrom: $('yearFrom').value.trim(),
+      yearTo: $('yearTo').value.trim()
+    };
+  }
+  function clearErr(){ const e=$('err'); e.hidden=true; e.textContent=''; }
+  function showErr(msg){ const e=$('err'); e.hidden=false; e.textContent=String(msg||''); }
+  function logLine(msg, ok=true){ $('log').textContent += `${ok?'✓':'✗'} ${msg}\n`; }
+  function fmtMoney(n){ const v = Number(n||0); return isFinite(v)?v.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0}):''; }
+
+
+  // Return ISO date if valid, else ''
+  function fmtDateStrict(s){
+    if(!s) return '';
+    const str = String(s).trim();
+    const m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+    return '';
+  }
+
+
+  function download(name, text, mime='text/plain'){
+    const url = URL.createObjectURL(new Blob([text],{type:mime}));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    URL.revokeObjectURL(url); a.remove();
+  }
+  function toCsv(rows){
+    if(!rows.length) return '';
+    const headers = Object.keys(rows[0]);
+    const esc = s => { s = String(s??''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+    return [headers.join(',')].concat(rows.map(r=>headers.map(h=>esc(r[h])).join(','))).join('\n');
+  }
+  function renderTable(tbody, rows, cols){
+    tbody.innerHTML='';
+    rows.forEach(r=>{
+      const tr=document.createElement('tr');
+      cols.forEach(c=>{
+        const td=document.createElement('td');
+        if(c.className) td.className=c.className;
+        if(c.render) td.appendChild(c.render(r)); else td.textContent = r[c.key]??'';
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+
+  // Pick first key whose value passes predicate
+  function pickFirst(obj, keys, predicate=(v)=>v!=null && String(v).trim()!==''){
+    for(const k of keys){
+      const v = obj[k];
+      if(predicate(v)) return v;
+    }
+    return undefined;
+  }
+
+
+  // ----- link builders -----
+  function refreshLinks(){
+    const { base, company } = params();
+    const enc = encodeURIComponent;
+
+
+    $('publicLinks').innerHTML = [
+      `<a target="_blank" rel="noopener" href="https://lda.senate.gov/filings/public/search/?registrant=${enc(company)}&search=search">Public LD-2 filings search</a>`
+    ].join(' · ');
+
+
+    // Worker testers (no LD-203)
+    $('apiLinks').innerHTML = [
+      `<a target="_blank" rel="noopener" id="apiFilings">Worker: /lda/filings?q=${enc(company)}</a>`,
+      `<a target="_blank" rel="noopener" id="apiLd1">Worker: /lda/filings/ld1?q=${enc(company)}</a>`,
+      `<a target="_blank" rel="noopener" id="apiRegistrants">Worker: /lda/registrants?q=${enc(company)}</a>`,
+      `<a target="_blank" rel="noopener" id="apiClients">Worker: /lda/clients?q=${enc(company)}</a>`
+    ].join(' · ');
+
+
+    const ap = $('apiLinks').querySelectorAll('a');
+    if(ap[0]) ap[0].href = `${base}/lda/filings/?q=${enc(company)}&per_page=100&sort=-filing_year`;
+    if(ap[1]) ap[1].href = `${base}/lda/filings/ld1/?q=${enc(company)}&per_page=100&sort=-filing_year`;
+    if(ap[2]) ap[2].href = `${base}/lda/registrants/?q=${enc(company)}&per_page=50`;
+    if(ap[3]) ap[3].href = `${base}/lda/clients/?q=${enc(company)}&per_page=50`;
+  }
+
+
+  // ----- network + paging -----
+  async function fetchJson(url,{label,quiet=false,timeoutMs=60000}={}){
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+    try{
+      const res = await fetch(url,{signal:ctrl.signal});
+      if(!res.ok) throw new Error(`HTTP ${res.status} on ${label||url}`);
+      const ct = res.headers.get('content-type')||'';
+      if(!ct.includes('application/json')) throw new Error(`Non-JSON on ${label||url}`);
+      const data = await res.json();
+      if(data && data.ok===false) throw new Error(data.error || `ok:false on ${label||url}`);
+      logLine(label||url,true);
+      return data;
+    }catch(e){
+      logLine(label||url,false);
+      if(!quiet) showErr(e.message);
+      throw e;
+    }finally{ clearTimeout(t); }
+  }
+
+
+  function parseQuery(url){
+    const u = new URL(url, location.origin);
+    const out = {}; for(const [k,v] of u.searchParams.entries()) out[k]=v;
+    return { pathname: u.pathname, params: out, url: u.toString() };
+  }
+
+
+  async function fetchAllPaged(firstUrl,{label,maxPages=20,quiet=false,kind}={}){
+    let url = firstUrl, page=1;
+    const out=[];
+    const seed = parseQuery(firstUrl);
+
+
+    while(url && page<=maxPages){
+      const data = await fetchJson(url,{label: label?`${label} (p${page})`:url, quiet});
+      const rows = data?.results || data?.data || data || [];
+      if(Array.isArray(rows)) out.push(...rows);
+
+
+      let nxt = data?.next || data?.next_source || null;
+      if(!nxt) break;
+
+
+      const parsed = parseQuery(nxt);
+
+
+      if (kind==='filings') {
+        const ignore = new Set(['page','page_size','per_page','ordering','sort']);
+        const hasFilter = Object.entries(parsed.params).some(([k,v])=>!ignore.has(k) && String(v||'').trim()!=='');
+        if(!hasFilter){
+          const u = new URL(nxt, location.origin);
+          const carry = ['q','registrant','registrant_id','client','client_id','registrant_name','client_name','filing_year','filing_period','form_type'];
+          for(const k of carry){
+            if(seed.params[k] && !u.searchParams.get(k)) u.searchParams.set(k, seed.params[k]);
+          }
+          if(seed.params.page_size && !u.searchParams.get('page_size')) u.searchParams.set('page_size', seed.params.page_size);
+          if(seed.params.per_page && !u.searchParams.get('per_page'))   u.searchParams.set('per_page', seed.params.per_page);
+          if(seed.params.ordering && !u.searchParams.get('ordering'))   u.searchParams.set('ordering', seed.params.ordering);
+          if(seed.params.sort && !u.searchParams.get('sort'))           u.searchParams.set('sort', seed.params.sort);
+          nxt = u.toString();
+        }
+      }
+
+
+      url = nxt;
+      page++;
+    }
+    return out;
+  }
+
+
+  // ----- period helpers -----
+  function periodOrder(code=''){
+    const c = String(code||'').toLowerCase();
+    const map = { first_quarter:1, second_quarter:2, third_quarter:3, fourth_quarter:4, q1:1, q2:2, q3:3, q4:4, mid_year:2, year_end:4 };
+    return map[c] ?? 0;
+  }
+  function periodLabel(f){
+    const y = f.filing_year || f.year || '';
+    const disp = f.filing_period_display || f.filing_period || f.filing_type_display || '';
+    return y && disp ? `${y} ${disp}` : (y?String(y): (disp||'')); }
+  function num(v){ return Number((v??'').toString().replace(/[^0-9.\-]/g,'')) || 0; }
+
+
+  // --- name normalization for self-registration detection (used only for outside-registrants) ---
+  const CORPORATE_SUFFIXES = new Set(['inc','incorporated','corp','corporation','co','company','llc','l.l.c','ltd','limited','pllc','plc','lp','llp','pc','p.c','gmbh','sa','s.a']);
+  const norm = s => String(s||'').toLowerCase().replace(/&/g,' and ').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+  const toks = s => norm(s).split(' ').filter(Boolean).filter(t=>!CORPORATE_SUFFIXES.has(t));
+  function sameEntity(a,b){
+    const A = new Set(toks(a)), B = new Set(toks(b));
+    if(A.size===0 || B.size===0) return false;
+    if(A.size!==B.size) return false;
+    for(const t of A){ if(!B.has(t)) return false; }
+    return true;
+  }
+
+
+  // ----- LD-1 -----
+  async function loadLd1(){
+    const { base, company, yearFrom, yearTo } = params();
+    const enc = encodeURIComponent;
+    const lc = company.toLowerCase();
+    let rows = [];
+    try{
+      rows = await fetchAllPaged(`${base}/lda/filings/ld1/?q=${enc(company)}&per_page=100&sort=-filing_year`, {label:'LD-1 filings', maxPages:8, kind:'filings'});
+    }catch(_e){}
+
+
+    const yf = /^\d{4}$/.test(yearFrom) ? Number(yearFrom) : null;
+    const yt = /^\d{4}$/.test(yearTo) ? Number(yearTo) : null;
+
+
+    const keep = rows.filter(f=>{
+      const reg = (f.registrant?.name || '').toLowerCase();
+      const cli = (f.client?.name || f.client_name || '').toLowerCase();
+      const y = Number(f.filing_year || f.year || 0);
+      if(!(reg.includes(lc) || cli.includes(lc))) return false;
+      if(yf && y < yf) return false;
+      if(yt && y > yt) return false;
+      return true;
+    }).map(f=>({
+      uuid: f.filing_uuid || f.id || null,
+      year: f.filing_year || f.year || '',
+      type: f.filing_type_display || f.filing_period_display || f.filing_type || '',
+      registrant: f.registrant?.name || '',
+      client: f.client?.name || f.client_name || '',
+      posted: fmtDateStrict(f.dt_posted || f.filed_date),
+      source: f.filing_document_url || (f.filing_uuid ? `https://lda.senate.gov/filings/public/filing/${f.filing_uuid}/print/` : ''),
+      _raw: f
+    }));
+
+
+    keep.sort((a,b)=>{
+      const ay = Number(a.year)||0, by = Number(b.year)||0;
+      if(ay!==by) return by-ay;
+      return (a.registrant||'').localeCompare(b.registrant||'');
+    });
+
+
+    state.ld1.rows = keep;
+
+
+    const chips = $('ld1Chips'); chips.innerHTML='';
+    const c1=document.createElement('span'); c1.className='chip ok'; c1.textContent=`LD-1 rows: ${keep.length}`; chips.appendChild(c1);
+
+
+    const tbody = $('ld1Body'); tbody.innerHTML='';
+    keep.forEach((r,idx)=>{
+      const tr = document.createElement('tr');
+
+
+      const expandTd = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.type='button'; btn.className='expander'; btn.textContent='Details';
+      btn.addEventListener('click', ()=>toggleLd1Detail(r.uuid, tr));
+      expandTd.appendChild(btn);
+
+
+      const cells = [
+        expandTd,
+        textCell(`${r.year} — ${r.type}`),
+        textCell(r.registrant),
+        textCell(r.client),
+        textCell(r.posted),
+        linkCell(r.source,'View')
+      ];
+      cells.forEach(td=>tr.appendChild(td));
+      tbody.appendChild(tr);
+
+
+      if(idx<3) toggleLd1Detail(r.uuid, tr, true);
+    });
+
+
+    function textCell(s){ const td=document.createElement('td'); td.textContent=s||''; return td; }
+    function linkCell(href,txt){ const td=document.createElement('td'); if(!href){td.textContent=''; return td;} const a=document.createElement('a'); a.href=href; a.target='_blank'; a.rel='noopener'; a.textContent=txt||'View'; td.appendChild(a); return td; }
+
+
+    async function toggleLd1Detail(uuid, anchorTr, forceOpen=false){
+      const next = anchorTr.nextElementSibling;
+      const isOpen = next && next.classList && next.classList.contains('ld1-detail-row');
+      if(isOpen && !forceOpen){ next.remove(); return; }
+
+
+      if(uuid && !state.ld1.details.has(uuid)){
+        try{
+          const detail = await fetchJson(`${base}/lda/filings/${uuid}/`, {label:`LD-1 detail ${uuid}`, quiet:true});
+          state.ld1.details.set(uuid, detail);
+        }catch(_e){
+          state.ld1.details.set(uuid, null);
+        }
+      }
+      const detail = uuid ? state.ld1.details.get(uuid) : null;
+
+
+      const dtr = document.createElement('tr'); dtr.className='ld1-detail-row';
+      const td = document.createElement('td'); td.colSpan = 6;
+      td.appendChild(renderLd1Detail(detail, uuid));
+      dtr.appendChild(td);
+      const exists = anchorTr.nextElementSibling && anchorTr.nextElementSibling.classList && anchorTr.nextElementSibling.classList.contains('ld1-detail-row');
+      if(exists) anchorTr.nextElementSibling.replaceWith(dtr); else anchorTr.after(dtr);
+    }
+
+
+    function renderLd1Detail(d, uuid){
+      const wrap = document.createElement('div'); wrap.className='ld1-detail';
+      if(!d){ wrap.textContent = 'Detail unavailable.'; return wrap; }
+
+
+      const reg = d.registrant || {};
+      const cli = d.client || {};
+      const issues = Array.isArray(d.lobbying_activities)? d.lobbying_activities : [];
+      const conv = Array.isArray(d.conviction_disclosures)? d.conviction_disclosures : [];
+      const aff  = Array.isArray(d.affiliated_organizations)? d.affiliated_organizations : [];
+
+
+      const regAddr = [reg.address_1, reg.address_2, reg.city, reg.state_display||reg.state, reg.zip].filter(Boolean).join(', ');
+      const cliAddr = [cli.address_1, cli.address_2, cli.city, cli.state_display||cli.state, cli.zip].filter(Boolean).join(', ');
+
+
+      const amtIncome = num(d.income);
+      const amtExpenses = num(d.expenses);
+      const sig = d.signature || d.posted_by_name || '';
+      const signedAt = d.dt_posted || d.filed_date || d.dt_signed || '';
+
+
+      const top = document.createElement('div'); top.className='grid';
+      top.appendChild(kv([
+        ['Year / Type', `${d.filing_year||''} — ${d.filing_type_display||d.filing_type||''}`],
+        ['Senate ID#', reg.house_registrant_id ? `${reg.id||''}-${cli.client_id||''}` : (reg.house_registrant_id||'')],
+        ['Registrant', reg.name||''],
+        ['Registrant Address', regAddr||''],
+        ['Client', cli.name||''],
+        ['Client Address', cliAddr||''],
+        ['Income (LD-2)', amtIncome? `$${fmtMoney(amtIncome)}` : '—'],
+        ['Expenses (LD-2)', amtExpenses? `$${fmtMoney(amtExpenses)}` : '—'],
+        ['Signed By', sig||''],
+        ['Posted', fmtDateStrict(signedAt)]
+      ]));
+      wrap.appendChild(top);
+
+
+      if(issues.length){
+        const sec = document.createElement('div'); sec.style.marginTop='8px';
+        const h = document.createElement('div'); h.innerHTML = '<b>Issues, Lobbyists & Agencies</b>'; sec.appendChild(h);
+        issues.forEach(act=>{
+          const block = document.createElement('div'); block.style.margin='6px 0 8px';
+          const code = act.general_issue_code_display || act.general_issue_code || '';
+          const desc = act.description || '';
+          const lobbyists = (act.lobbyists||[]).map(l=>parts([
+            l.lobbyist?.prefix_display, l.lobbyist?.first_name, l.lobbyist?.nickname,
+            l.lobbyist?.middle_name, l.lobbyist?.last_name, l.lobbyist?.suffix_display
+          ])).filter(Boolean);
+          const agencies = (act.government_entities||[]).map(g=>g.name).filter(Boolean);
+
+
+          const line1 = document.createElement('div');
+          line1.innerHTML = `<span class="tag">${code||'Issue'}</span> ${desc||''}`;
+          block.appendChild(line1);
+
+
+          if(lobbyists.length){
+            const lDiv = document.createElement('div'); lDiv.className='muted';
+            lDiv.textContent = 'Lobbyists: ' + lobbyists.join(', ');
+            block.appendChild(lDiv);
+          }
+          if(agencies.length){
+            const aDiv = document.createElement('div'); aDiv.className='muted';
+            aDiv.textContent = 'Agencies/Congress: ' + agencies.join(', ');
+            block.appendChild(aDiv);
+          }
+          sec.appendChild(block);
+        });
+        wrap.appendChild(sec);
+      }
+
+
+      if(aff.length){
+        const sec = document.createElement('div'); sec.style.marginTop='8px';
+        const h = document.createElement('div'); h.innerHTML = '<b>Affiliated Organizations</b>'; sec.appendChild(h);
+        aff.slice(0,10).forEach(a=>{
+          const line = document.createElement('div'); line.className='muted';
+          const nm = a.name || '';
+          const city = a.city || ''; const st = a.state_display || a.state || '';
+          line.textContent = [nm,[city,st].filter(Boolean).join(', ')].filter(Boolean).join(' — ');
+          sec.appendChild(line);
+        });
+        wrap.appendChild(sec);
+      }
+
+
+      if(conv.length){
+        const sec = document.createElement('div'); sec.style.marginTop='8px';
+        const h = document.createElement('div'); h.innerHTML = '<b>Convictions Disclosure</b>'; sec.appendChild(h);
+        conv.forEach(c=>{
+          const line = document.createElement('div'); line.className='muted';
+          line.textContent = c.description || 'Disclosure item';
+          sec.appendChild(line);
+        });
+        wrap.appendChild(sec);
+      }
+
+
+      const src = document.createElement('div'); src.style.marginTop='6px';
+      const a = document.createElement('a'); a.href = d.filing_document_url || (uuid?`https://lda.senate.gov/filings/public/filing/${uuid}/print/`:''); a.target='_blank'; a.rel='noopener'; a.textContent='Open official print view';
+      src.appendChild(a);
+      wrap.appendChild(src);
+
+
+      return wrap;
+
+
+      function parts(arr){ return arr.map(x=>String(x||'').trim()).filter(Boolean).join(' '); }
+      function kv(items){
+        const cont = document.createElement('div');
+        items.forEach(([k,v])=>{
+          const row = document.createElement('div'); row.className='kv';
+          const b = document.createElement('b'); b.textContent = k+':';
+          const span = document.createElement('span'); span.textContent = v||'';
+          row.appendChild(b); row.appendChild(span); cont.appendChild(row);
+        });
+        return cont;
+      }
+    }
+  }
+
+
+  // ----- LD-2 -----
+  async function loadLd2(){
+    const { base, company, yearFrom, yearTo } = params();
+    const enc = encodeURIComponent;
+    const lc = company.toLowerCase();
+
+
+    // ---------- Existing LD-2 logic (unchanged) ----------
+    let registrantIds = [], clientIds = [];
+    try{
+      const regs = await fetchAllPaged(`${base}/lda/registrants/?q=${enc(company)}&per_page=50`,{label:'LDA registrants',maxPages:3,quiet:true});
+      regs.forEach(r=>{ if((r.name||'').toLowerCase().includes(lc) && r.id!=null) registrantIds.push(r.id); });
+      registrantIds = Array.from(new Set(registrantIds));
+    }catch(_e){}
+    try{
+      const clients = await fetchAllPaged(`${base}/lda/clients/?q=${enc(company)}&per_page=50`,{label:'LDA clients',maxPages:3,quiet:true});
+      clients.forEach(c=>{ if((c.name||'').toLowerCase().includes(lc) && c.id!=null) clientIds.push(c.id); });
+      clientIds = Array.from(new Set(clientIds));
+    }catch(_e){}
+
+
+    let filings = [];
+    let usedRoute = 'id-filtered';
+    try{
+      for(const rid of registrantIds.slice(0,5)){
+        const rows = await fetchAllPaged(`${base}/lda/filings/?registrant_id=${rid}&per_page=100&sort=-filing_year`,{label:`LDA filings (registrant ${rid})`,maxPages:6, kind:'filings'});
+        filings.push(...rows);
+      }
+      for(const cid of clientIds.slice(0,5)){
+        const rows = await fetchAllPaged(`${base}/lda/filings/?client_id=${cid}&per_page=100&sort=-filing_year`,{label:`LDA filings (client ${cid})`,maxPages:6, kind:'filings'});
+        filings.push(...rows);
+      }
+    }catch(_e){}
+
+
+    if(!filings.length){
+      usedRoute = 'q-filtered';
+      const rows = await fetchAllPaged(`${base}/lda/filings/?q=${enc(company)}&per_page=100&sort=-filing_year`,{label:'LDA filings (q=company)',maxPages:8, kind:'filings'});
+      filings = rows.filter(f=>{
+        const reg = (f.registrant?.name || '').toLowerCase();
+        const cli = (f.client?.name || f.client_name || '').toLowerCase();
+        return reg.includes(lc) || cli.includes(lc);
+      });
+    }
+
+
+    const yf = /^\d{4}$/.test(yearFrom) ? Number(yearFrom) : null;
+    const yt = /^\d{4}$/.test(yearTo) ? Number(yearTo) : null;
+    if(yf || yt){
+      filings = filings.filter(f=>{
+        const y = Number(f.filing_year || f.year || 0);
+        if(yf && y < yf) return false;
+        if(yt && y > yt) return false;
+        return true;
+      });
+    }
+
+
+    // By period & totals (unchanged)
+    const byPeriod = new Map();
+    let inhouse=0, hired=0;
+
+
+    filings.forEach(f=>{
+      const regName = (f.registrant?.name || '').trim();
+      const cliName = (f.client?.name || f.client_name || '').trim();
+      const regMatch = regName.toLowerCase().includes(lc);
+      const cliMatch = cliName.toLowerCase().includes(lc);
+      const y = Number(f.filing_year || f.year || 0);
+      const pc = String(f.filing_period || '').toLowerCase();
+      const sortKey = y*10 + periodOrder(pc);
+      const label = periodLabel(f) || 'Unknown';
+      const key = `${y}|${pc}|${label}`;
+      const inc = num(f.income);
+      const exp = num(f.expenses);
+
+
+      if(regMatch && cliMatch){
+        inhouse += (exp || inc);
+        const o = byPeriod.get(key) || {period:label, sortKey, inhouse:0, hired:0, filings:0};
+        o.inhouse += (exp || inc); o.filings += 1; byPeriod.set(key,o);
+        return;
+      }
+
+
+      if(regMatch){
+        inhouse += (exp || inc);
+        const o = byPeriod.get(key) || {period:label, sortKey, inhouse:0, hired:0, filings:0};
+        o.inhouse += (exp || inc); o.filings += 1; byPeriod.set(key,o);
+      }
+      if(cliMatch){
+        hired += (inc || exp);
+        const o = byPeriod.get(key) || {period:label, sortKey, inhouse:0, hired:0, filings:0};
+        o.hired += (inc || exp); o.filings += 1; byPeriod.set(key,o);
+      }
+    });
+
+
+    const byPeriodRows = Array.from(byPeriod.values())
+      .map(x=>({ period:x.period, sortKey:x.sortKey, inhouse:x.inhouse, hired:x.hired, total:x.inhouse+x.hired, filings:x.filings }))
+      .sort((a,b)=> a.sortKey - b.sortKey);
+
+
+    // ---------- NEW: accurate "Outside Registrants Paid" via per-year client_name= ----------
+    // Years to fetch: use explicit yearFrom/yearTo if provided; else derive from the existing filings
+    let years = [];
+    if (yf || yt){
+      const y1 = yf ?? yt;
+      const y2 = yt ?? yf;
+      for(let y=y1; y<=y2; y++) years.push(y);
+    } else {
+      const yrSet = new Set();
+      for (const f of filings){
+        const y = Number(f.filing_year || f.year || 0);
+        if(y) yrSet.add(y);
+      }
+      years = Array.from(yrSet).sort((a,b)=>a-b);
+    }
+
+
+    const outsideByFirm = new Map();
+    for (const year of years){
+      try{
+        const url = `${base}/lda/filings/?client_name=${enc(company)}&filing_year=${year}&per_page=100&ordering=-filing_year&sort=-filing_year`;
+        const rows = await fetchAllPaged(url, {label:`LDA filings (client_name=, year ${year})`, maxPages:8, kind:'filings'});
+        for (const f of rows){
+          const regName = (f.registrant?.name || '').trim();
+          const clientName = (f.client?.name || f.client_name || '').trim();
+          if(!regName || !clientName) continue;
+          // exclude self-registrations
+          if (sameEntity(regName, clientName)) continue;
+          const val = num(f.income) || num(f.expenses);
+          if(!val) continue;
+          const o = outsideByFirm.get(regName) || { registrant: regName, income: 0, filings: 0 };
+          o.income += val; o.filings += 1; outsideByFirm.set(regName, o);
+        }
+      }catch(_e){}
+    }
+    const byFirmRows = Array.from(outsideByFirm.values()).sort((a,b)=> b.income - a.income);
+    // ---------- END NEW ----------
+
+
+    state.spend = { totals:{ inhouse, hired, all: inhouse+hired }, byPeriod:byPeriodRows, byFirm:byFirmRows, raw:filings };
+
+
+    const chips = $('spendChips'); chips.innerHTML='';
+    const c1=document.createElement('span'); c1.className='chip ok'; c1.textContent=`In-house (registrant=${company}): $${fmtMoney(inhouse)}`; chips.appendChild(c1);
+    const c2=document.createElement('span'); c2.className='chip ok'; c2.textContent=`Hired firms (client=${company}): $${fmtMoney(hired)}`; chips.appendChild(c2);
+    const c3=document.createElement('span'); c3.className='chip'; c3.textContent=`Total: $${fmtMoney(inhouse+hired)} (${byPeriodRows.reduce((s,x)=>s+x.filings,0)} filings via ${usedRoute})`; chips.appendChild(c3);
+
+
+    renderTable($('spendByPeriod'), byPeriodRows, [
+      {key:'period'},
+      {key:'inhouse', className:'right', render:r=>document.createTextNode(fmtMoney(r.inhouse))},
+      {key:'hired', className:'right', render:r=>document.createTextNode(fmtMoney(r.hired))},
+      {key:'total', className:'right', render:r=>document.createTextNode(fmtMoney(r.total))},
+      {key:'filings', className:'right'}
+    ]);
+    renderTable($('spendByFirm'), byFirmRows, [
+      {key:'registrant'},
+      {key:'income', className:'right', render:r=>document.createTextNode(fmtMoney(r.income))},
+      {key:'filings', className:'right'}
+    ]);
+  }
+
+
+  // ----- Exports (LD-1, LD-2) -----
+  $('ld1Csv').addEventListener('click', ()=>{
+    const rows = (state.ld1.rows||[]).map(r=>({
+      year:r.year, type:r.type, registrant:r.registrant, client:r.client, posted:r.posted, source:r.source
+    }));
+    download('lda_ld1_rows.csv', toCsv(rows), 'text/csv');
+  });
+  $('ld1Json').addEventListener('click', ()=>{
+    download('lda_ld1_rows.json', JSON.stringify(state.ld1.rows,null,2), 'application/json');
+  });
+  $('spendCsv').addEventListener('click', ()=>{
+    const flat = [
+      ...state.spend.byPeriod.map(r=>({kind:'byPeriod', period:r.period, inhouse:r.inhouse, hired:r.hired, total:r.total, filings:r.filings})),
+      ...state.spend.byFirm.map(r=>({kind:'byFirm', registrant:r.registrant, income:r.income, filings:r.filings}))
+    ];
+    download('lda_ld2_aggregates.csv', toCsv(flat), 'text/csv');
+  });
+  $('spendJson').addEventListener('click', ()=>{
+    download('lda_ld2_aggregates.json', JSON.stringify(state.spend,null,2), 'application/json');
+  });
+
+
+  // ----- Run + Reset -----
+  async function runAll(){
+    clearErr(); $('log').textContent='';
+    const btnRun = $('run'); const btns = document.querySelectorAll('button');
+    btnRun.disabled = true; btnRun.textContent = 'Running…';
+    btns.forEach(b=> b.disabled = b!==btnRun ? true : b.disabled);
+    try{
+      await loadLd1();
+      await loadLd2();
+    }catch(e){
+      // already surfaced via showErr/logLine
+    }
+    btnRun.disabled = false; btnRun.textContent = 'Run LDA';
+    btns.forEach(b=> b.disabled = false);
+  }
+  window.runAll = runAll;
+
+
+  $('reset').addEventListener('click', ()=>{
+    clearErr(); $('log').textContent='';
+    state.ld1 = { rows:[], details:new Map() };
+    state.spend = { totals:{inhouse:0,hired:0,all:0}, byPeriod:[], byFirm:[], raw:[] };
+    ['ld1Chips','ld1Body','spendChips','spendByPeriod','spendByFirm'].forEach(id=>$(id).innerHTML='');
+  });
+
+
+  // ----- Boot -----
+  try{
+    $('run').addEventListener('click', runAll);
+    ['baseUrl','company','yearFrom','yearTo'].forEach(id=>{
+      $(id).addEventListener('change', refreshLinks);
+      $(id).addEventListener('keyup', refreshLinks);
+    });
+    refreshLinks();
+    $('bootChip').hidden = false;
+  }catch(err){
+    showErr('Init error: ' + (err?.message || err));
+  }
+})();
+</script>
+</body>
+</html>
+
+
