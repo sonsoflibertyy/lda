@@ -1,8 +1,8 @@
 // src/routes/lda-proxy.js
-import { json, withCORS, jsonHeaders, passthroughHeaders } from "../utils/http.js";
-import { resolveAllowedOrigin } from "../utils/misc.js";
-import { LDA_BASE } from "../config.js";
-import { applyLdaSmartParamRewrites } from "../utils/lda.js";
+import { json, withCORS, jsonHeaders, passthroughHeaders } from "./utils/http.js";
+import { resolveAllowedOrigin } from "./utils/misc.js";
+import { LDA_BASE } from "./config.js";
+import { applyLdaSmartParamRewrites } from "./utils/lda.js";
 
 
 /** Treat blank params as missing. */
