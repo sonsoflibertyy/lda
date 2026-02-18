@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>LD-203 Contributions (Year + Sort, Proxy-only)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{--bg:#0b0e14;--card:#121826;--text:#e7eef7;--muted:#9ab0c9;--line:#233049;--accent:#6aa8ff}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+    .wrap{max-width:1100px;margin:30px auto;padding:0 16px}
+    h1{margin:0 0 10px;font-size:22px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:14px}
+    label{display:block;color:var(--muted);font-weight:600;margin-bottom:6px}
+    input,button,select{background:#0f1422;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+    button{cursor:pointer}
+    .primary{background:var(--accent);color:#071022;border-color:#3a7ee7;font-weight:700}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+    .small{color:var(--muted);font-size:12px}
+    .status{margin-top:8px}
+    .error{color:#ff7a7a}
+    .pill{display:inline-block;padding:4px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);margin-right:6px}
+    table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+    th,td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top}
+    th{position:sticky;top:0;background:#152036;text-align:left}
+    .right{text-align:right}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+    .nowrap{white-space:nowrap}
+    .toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .tag{background:#0f1a2d;border:1px solid var(--line);padding:2px 6px;border-radius:8px;color:var(--muted)}
+    .hidden{display:none}
+    .loading{opacity:.6;pointer-events:none}
+    a.link{color:#a6c6ff;text-decoration:none;border-bottom:1px dashed #466ab4}
+    .debug pre{white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;background:#0e1321;border:1px solid var(--line);padding:8px;border-radius:8px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LD-203 Contributions Finder (Year + Sort, Proxy-only)</h1>
+
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="q">Corporation / registrant</label>
+        <input id="q" placeholder="e.g., Pfizer" />
+        <div class="small">We resolve a precise <b>registrant_name</b> first, then fetch LD-203 via the proxy.</div>
+      </div>
+      <div>
+        <label for="year">Year</label>
+        <select id="year"></select>
+      </div>
+      <div>
+        <label for="sort">Sort</label>
+        <select id="sort">
+          <option value="amount_desc">Amount (high → low)</option>
+          <option value="amount_asc">Amount (low → high)</option>
+          <option value="date_desc">Date (new → old)</option>
+          <option value="date_asc">Date (old → new)</option>
+        </select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button id="go" class="primary">Search LD-203</button>
+      </div>
+    </div>
+
+
+    <div id="resolved" class="small hidden"></div>
+    <div id="status" class="status small"></div>
+  </div>
+
+
+  <div class="card">
+    <div class="toolbar">
+      <div>
+        <span class="tag" id="tagCount">0 rows</span>
+        <span class="tag" id="tagRegistrant"></span>
+        <span class="tag" id="tagDates"></span>
+      </div>
+      <div>
+        <button id="more" class="hidden">Load more</button>
+        <button id="reset">Reset</button>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th class="nowrap">Date</th>
+          <th>Contributor</th>
+          <th>Payee / Honoree</th>
+          <th class="nowrap">Type</th>
+          <th class="right nowrap">Amount ($)</th>
+          <th>Filing</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+
+  <div class="card debug">
+    <div class="toolbar"><strong>Debug</strong><span class="small">Every request hits the proxy.</span></div>
+    <div class="small">Last request URL:</div>
+    <pre id="dbgUrl" class="mono"></pre>
+    <div class="small">HTTP status / error:</div>
+    <pre id="dbgErr" class="mono"></pre>
+    <div class="small">Sample of last response body:</div>
+    <pre id="dbgBody" class="mono"></pre>
+  </div>
+</div>
+
+
+<script>
+(() => {
+  // --------- CONFIG (PROXY ONLY) ----------
+  const BASE = 'https://mydistrict-proxy.bryan-schafer.workers.dev/lda';
+
+
+  // ---------- DOM ----------
+  const elQ = document.getElementById('q');
+  const elYear = document.getElementById('year');
+  const elSort = document.getElementById('sort');
+  const elGo = document.getElementById('go');
+  const elResolved = document.getElementById('resolved');
+  const elStatus = document.getElementById('status');
+  const elMore = document.getElementById('more');
+  const elReset = document.getElementById('reset');
+  const elTBody = document.getElementById('tbody');
+  const elTagCount = document.getElementById('tagCount');
+  const elTagRegistrant = document.getElementById('tagRegistrant');
+  const elTagDates = document.getElementById('tagDates');
+  const elDbgUrl = document.getElementById('dbgUrl');
+  const elDbgErr = document.getElementById('dbgErr');
+  const elDbgBody = document.getElementById('dbgBody');
+
+
+  // ---------- Populate year dropdown (recent 15 years by default) ----------
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const firstYear = 2008; // LD-203 widely available from 2008+
+  for(let y=currentYear; y>=firstYear; y--){
+    const opt = document.createElement('option');
+    opt.value = String(y);
+    opt.textContent = String(y);
+    elYear.appendChild(opt);
+  }
+
+
+  // ---------- State ----------
+  let state = {
+    canonicalName: null,   // exact registrant_name to use, e.g., "PFIZER INC."
+    nextUrl: null,         // paginated next (ALWAYS from proxy)
+    rows: [],              // flattened rows [{date, contributor, payee, honoree, type, amount, filingMeta...}]
+  };
+
+
+  // ---------- Utils ----------
+  function setStatus(msg, err=false){ elStatus.innerHTML = msg ? (err?`<span class="error">${escapeHtml(msg)}</span>`:escapeHtml(msg)) : '' }
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])) }
+  function moneyFmt(x){ const n=Number(x); return isFinite(n)? n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) : x }
+  function parseAmount(a){ const n = Number(a); return isFinite(n) ? n : 0; }
+  function titleCase(s){ return String(s).toLowerCase().replace(/\b([a-z])/g, m=>m.toUpperCase()) }
+
+
+  function showResolved(name){
+    if(!name){ elResolved.classList.add('hidden'); elResolved.innerHTML=''; return; }
+    elResolved.classList.remove('hidden');
+    elResolved.innerHTML = `Using <span class="pill mono">registrant_name="${escapeHtml(name)}"</span>`;
+  }
+
+
+  async function fetchJSON(url){
+    elDbgUrl.textContent = url;
+    let res, text;
+    try{
+      res = await fetch(url, { headers:{ 'Accept':'application/json' }});
+      text = await res.text();
+      elDbgBody.textContent = text.slice(0, 1800);
+      if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      elDbgErr.textContent = `OK (${res.status})`;
+      return JSON.parse(text);
+    }catch(e){
+      elDbgErr.textContent = e && e.message ? e.message : String(e);
+      throw e;
+    }
+  }
+
+
+  // Build a proxy URL for /contributions with arbitrary params (always via proxy)
+  function proxyContribUrl(params){
+    const p = new URLSearchParams({ ordering:'-contribution_date', page_size:'100' });
+    for(const [k,v] of Object.entries(params || {})){
+      if(v!==null && v!==undefined && String(v).trim()!=='') p.set(k, String(v).trim());
+    }
+    return `${BASE}/contributions/?${p.toString()}`;
+  }
+
+
+  // ---------- Resolve canonical registrant_name (proxy-only) ----------
+  async function resolveRegistrantName(raw, year){
+    const q = String(raw||'').trim();
+    if(!q) throw new Error('Please enter a corporation/registrant name.');
+
+
+    const after = `${year}-01-01`;
+    const before = `${year}-12-31`;
+
+
+    const baseTitle = titleCase(q.replace(/\s+inc(\.|$)/i,'').trim());
+    const variants = Array.from(new Set([
+      q, titleCase(q), `${baseTitle} Inc`, `${baseTitle} Inc.`
+    ]));
+
+
+    // Try contributions for direct hits
+    for(const name of variants){
+      const testUrl = proxyContribUrl({
+        registrant_name: name,
+        contribution_date_after: after,
+        contribution_date_before: before
+      });
+      try{
+        setStatus(`Checking contributions for registrant_name="${name}"…`);
+        const js = await fetchJSON(testUrl);
+        if(Array.isArray(js.results) && js.results.length){
+          const rname = js.results[0]?.registrant?.name || name;
+          return rname;
+        }
+      }catch(_e){}
+    }
+
+
+    // Fallback: registrants search, pick best containing the query (keep “Pfizer” stricter)
+    const regUrl = `${BASE}/registrants/?search=${encodeURIComponent(q)}&page_size=100&ordering=name`;
+    setStatus('Looking up registrants via proxy…');
+    const regs = await fetchJSON(regUrl);
+    const containsPfizer = /pfizer/i.test(q);
+    const candidates = (regs.results||[]).filter(r => r && r.name && (
+      containsPfizer ? /pfizer/i.test(r.name) : r.name.toLowerCase().includes(q.toLowerCase())
+    ));
+    let picked = candidates.find(r => r.name.toUpperCase() === q.toUpperCase())
+             || candidates.find(r => r.name.toUpperCase() === 'PFIZER INC.')
+             || candidates.find(r => r.name.toUpperCase().startsWith(q.toUpperCase()))
+             || candidates[0];
+
+
+    if(picked && picked.name){ return picked.name; }
+    return `${baseTitle} Inc.`; // last ditch
+  }
+
+
+  // ---------- Row building / rendering ----------
+  function addRowsFromPage(json, canonicalName){
+    const filings = json.results || [];
+    const toAdd = [];
+
+
+    for(const f of filings){
+      const regName = (f && f.registrant && f.registrant.name) ? String(f.registrant.name) : '';
+      if(!regName || regName.toUpperCase() !== String(canonicalName||'').toUpperCase()) continue;
+
+
+      const items = f.contribution_items || [];
+      for(const it of items){
+        toAdd.push({
+          date: it.date || '',
+          contributor: it.contributor_name || '',
+          payee: it.payee_name || '',
+          honoree: it.honoree_name || '',
+          type: it.contribution_type_display || it.contribution_type || '',
+          amount: parseAmount(it.amount || 0),
+          filingType: f.filing_type_display || '',
+          filingPeriod: f.filing_period_display || '',
+          filingYear: f.filing_year || '',
+          registrant: regName,
+          lobbyist: f.lobbyist ? [f.lobbyist.first_name,f.lobbyist.middle_name,f.lobbyist.last_name].filter(Boolean).join(' ') : '',
+          docUrl: f.filing_document_url || ''
+        });
+      }
+    }
+
+
+    state.rows.push(...toAdd);
+    return toAdd.length;
+  }
+
+
+  function renderRows(){
+    const sort = elSort.value;
+    const arr = state.rows.slice(); // clone before sort
+
+
+    arr.sort((a,b)=>{
+      if(sort==='amount_desc') return b.amount - a.amount;
+      if(sort==='amount_asc')  return a.amount - b.amount;
+      if(sort==='date_desc')   return (b.date > a.date) ? 1 : (b.date < a.date ? -1 : 0);
+      if(sort==='date_asc')    return (a.date > b.date) ? 1 : (a.date < b.date ? -1 : 0);
+      return 0;
+    });
+
+
+    const frag = document.createDocumentFragment();
+    for(const r of arr){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="nowrap">${escapeHtml(r.date)}</td>
+        <td>${escapeHtml(r.contributor)}</td>
+        <td>
+          <div><strong>${escapeHtml(r.payee)}</strong></div>
+          ${r.honoree ? `<div class="small">Honoree: ${escapeHtml(r.honoree)}</div>`:''}
+        </td>
+        <td class="nowrap">${escapeHtml(r.type)}</td>
+        <td class="right mono">${moneyFmt(r.amount)}</td>
+        <td>
+          <div class="small">${escapeHtml(r.filingType)} • ${escapeHtml(r.filingPeriod)} • ${escapeHtml(String(r.filingYear))}</div>
+          <div class="small">Registrant: ${escapeHtml(r.registrant)}${r.lobbyist ? ` • Lobbyist: ${escapeHtml(r.lobbyist)}`:''}</div>
+          ${r.docUrl ? `<a class="link" href="${r.docUrl}" target="_blank" rel="noopener">View filing</a>`:''}
+        </td>
+      `;
+      frag.appendChild(tr);
+    }
+    elTBody.innerHTML = '';
+    elTBody.appendChild(frag);
+    elTagCount.textContent = `${arr.length} row${arr.length===1?'':'s'}`;
+  }
+
+
+  async function fetchPage(url){
+    setStatus('Fetching contributions…');
+    const json = await fetchJSON(url);
+    const added = addRowsFromPage(json, state.canonicalName);
+    state.nextUrl = json.next || null; // already proxied
+    elMore.classList.toggle('hidden', !state.nextUrl);
+    renderRows();
+    setStatus(added ? `Added ${added} item${added===1?'':'s'}${state.nextUrl?' — more available.':''}` : 'No items on this page.');
+    return added;
+  }
+
+
+  // ---------- Flow ----------
+  async function run(){
+    try{
+      elGo.classList.add('loading');
+      state = { canonicalName:null, nextUrl:null, rows:[] };
+      elTBody.innerHTML = '';
+      elTagCount.textContent = '0 rows';
+      elTagRegistrant.textContent = '';
+      elTagDates.textContent = '';
+      setStatus('');
+      elMore.classList.add('hidden');
+
+
+      const name = (elQ.value || '').trim();
+      if(!name){ setStatus('Enter a corporation/registrant name.', true); return; }
+
+
+      const year = Number(elYear.value || String(new Date().getFullYear()));
+      const after = `${year}-01-01`;
+      const before = `${year}-12-31`;
+      elTagDates.textContent = `Year: ${year}`;
+
+
+      // Resolve canonical registrant_name (proxy-only)
+      const canonical = await resolveRegistrantName(name, year);
+      if(!canonical){ setStatus(`No registrant found for “${name}”.`, true); return; }
+      state.canonicalName = canonical;
+      showResolved(canonical);
+      elTagRegistrant.textContent = `Registrant: ${canonical}`;
+
+
+      // First page (via registrant_name + year bounds)
+      const url = proxyContribUrl({
+        registrant_name: canonical,
+        contribution_date_after: after,
+        contribution_date_before: before
+      });
+      await fetchPage(url);
+
+
+      if(state.rows.length === 0){
+        setStatus(`No LD-203 contribution items found for ${canonical} in ${year}.`, true);
+      }
+    }catch(e){
+      console.error(e);
+      setStatus(e.message || String(e), true);
+    }finally{
+      elGo.classList.remove('loading');
+    }
+  }
+
+
+  async function more(){
+    if(!state.nextUrl) return;
+    try{
+      elMore.classList.add('loading');
+      await fetchPage(state.nextUrl);
+    }catch(e){
+      console.error(e);
+      setStatus(e.message || String(e), true);
+    }finally{
+      elMore.classList.remove('loading');
+    }
+  }
+
+
+  // ---------- Events ----------
+  elGo.addEventListener('click', run);
+  elMore.addEventListener('click', more);
+  elReset.addEventListener('click', ()=>{
+    state = { canonicalName:null, nextUrl:null, rows:[] };
+    elQ.value='';
+    elSort.value='amount_desc';
+    elTBody.innerHTML='';
+    elTagCount.textContent='0 rows';
+    elTagRegistrant.textContent='';
+    elTagDates.textContent='';
+    showResolved(null);
+    setStatus('');
+    elMore.classList.add('hidden');
+    elDbgUrl.textContent=''; elDbgErr.textContent=''; elDbgBody.textContent='';
+  });
+  // re-render instantly when changing sort
+  elSort.addEventListener('change', renderRows);
+  // Enter key support
+  [elQ, elYear].forEach(el => {
+    el.addEventListener('keydown', ev => {
+      if(ev.key === 'Enter'){ ev.preventDefault(); run(); }
+    });
+  });
+})();
+</script>
+</body>
+</html>
+
+
