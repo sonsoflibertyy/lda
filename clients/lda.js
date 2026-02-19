@@ -1,7 +1,14 @@
 import { LDA_BASE as DEFAULT_LDA_BASE } from "../config.js";
 import { applyLdaSmartParamRewrites } from "../utils/lda.js";
 
-export function makeLdaClient({ LDA_KEY, LDA_BASE, timeoutMs } = {}) {
+/**
+ * @typedef {Object} LdaClientOptions
+ * @property {string} [LDA_KEY]
+ * @property {string} [LDA_BASE]
+ * @property {number|string} [timeoutMs]
+ */
+
+export function makeLdaClient(/** @type {LdaClientOptions} */ { LDA_KEY, LDA_BASE, timeoutMs } = {}) {
   const base = LDA_BASE || DEFAULT_LDA_BASE;
   const parsedTimeout = Number(timeoutMs);
   const effectiveTimeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 60000;
