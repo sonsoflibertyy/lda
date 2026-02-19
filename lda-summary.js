@@ -1,9 +1,9 @@
-import { json } from "../utils/http.js";
-import { resolveAllowedOrigin } from "../utils/misc.js";
-import { lastNQuarters, yqToFilters, yqFromReport } from "../utils/time.js";
-import { fecNameVariants, normalizeCompanyInput } from "../utils/names.js";
-import { makeLdaClient } from "../clients/lda.js";
-import { reduceAmendments, aggregateLDA, getRegistrantName, getClientName } from "../aggregators/rollups.js";
+import { json } from "./utils/http.js";
+import { resolveAllowedOrigin } from "./utils/misc.js";
+import { lastNQuarters, yqToFilters, yqFromReport } from "./utils/time.js";
+import { fecNameVariants, normalizeCompanyInput } from "./utils/names.js";
+import { makeLdaClient } from "./clients/lda.js";
+import { reduceAmendments, aggregateLDA, getRegistrantName, getClientName } from "./aggregators/rollups.js";
 
 function extractLobbyistNames(detail){
   const out = new Set();
