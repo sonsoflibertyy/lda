@@ -26,7 +26,7 @@ export function json(body, status = 200, _allowOrigin = "*") {
  *
  * worker.js is the single source of truth for CORS now.
  */
-export function withCORS(resp /*, _a, _b */) {
+export function withCORS(resp, _a = undefined, _b = undefined) {
   return resp;
 }
 
