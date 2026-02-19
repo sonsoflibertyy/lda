@@ -1,7 +1,7 @@
 // src/routes/lda-proxy.js
 import { json, withCORS, jsonHeaders, passthroughHeaders } from "./utils/http.js";
 import { resolveAllowedOrigin } from "./utils/misc.js";
-import { LDA_BASE } from "./config.js";
+import { LDA_BASE as DEFAULT_LDA_BASE } from "./config.js";
 import { applyLdaSmartParamRewrites } from "./utils/lda.js";
 
 
@@ -239,9 +239,9 @@ function carryForwardLdaFilters(targetUrl, seedUrl, upstreamPath) {
 
 
 /** Map Senate absolute/relative next/prev URLs back through this Worker and carry forward filters. */
-function mapLdaAbsoluteToProxy(u, proxyOrigin, seedUrl) {
+function mapLdaAbsoluteToProxy(u, proxyOrigin, seedUrl, ldaBase) {
   try {
-    const parsed = new URL(u, LDA_BASE + "/");
+    const parsed = new URL(u, ldaBase + "/");
 
 
     if (/lda\.senate\.gov$/i.test(parsed.hostname) && /^\/api\/v1\//i.test(parsed.pathname)) {
@@ -264,17 +264,17 @@ function mapLdaAbsoluteToProxy(u, proxyOrigin, seedUrl) {
 
 
 /** Deeply rewrite JSON payload next/previous links and preserve *_source for debugging. */
-function rewritePayloadDeep(node, proxyOrigin, seedUrl) {
-  if (Array.isArray(node)) return node.map((n) => rewritePayloadDeep(n, proxyOrigin, seedUrl));
+function rewritePayloadDeep(node, proxyOrigin, seedUrl, ldaBase) {
+  if (Array.isArray(node)) return node.map((n) => rewritePayloadDeep(n, proxyOrigin, seedUrl, ldaBase));
   if (node && typeof node === "object") {
     const out = {};
     for (const [k, v] of Object.entries(node)) {
       if ((k === "next" || k === "previous") && typeof v === "string") {
         out[`${k}_source`] = v;
-        out[k] = mapLdaAbsoluteToProxy(v, proxyOrigin, seedUrl);
+        out[k] = mapLdaAbsoluteToProxy(v, proxyOrigin, seedUrl, ldaBase);
         continue;
       }
-      out[k] = rewritePayloadDeep(v, proxyOrigin, seedUrl);
+      out[k] = rewritePayloadDeep(v, proxyOrigin, seedUrl, ldaBase);
     }
     return out;
   }
@@ -286,14 +286,14 @@ export async function handleLdaProxy(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
   const allowOrigin = resolveAllowedOrigin(env, request.headers.get("Origin"));
-
+  const LDA_BASE = env?.LDA_BASE || env?.LDA_BASE_URL || DEFAULT_LDA_BASE;
 
   // Convenience: /lda → upstream root with query-only rewrites
   if (path === "/lda" || path === "/lda/") {
     const upstream = new URL(LDA_BASE + "/");
     upstream.search = url.search;
     applyLdaSmartParamRewrites(upstream);
-    return forward(upstream, request, allowOrigin, { rewrite: true, env });
+    return forward(upstream, request, allowOrigin, { rewrite: true, env, ldaBase: LDA_BASE });
   }
   if (!path.startsWith("/lda/")) return null;
 
@@ -308,7 +308,7 @@ export async function handleLdaProxy(request, env) {
     const upstream = new URL(LDA_BASE + "/" + sub);
     upstream.search = "?" + p.toString();
     applyLdaSmartParamRewrites(upstream);
-    return forward(upstream, request, allowOrigin, { rewrite: true, env });
+    return forward(upstream, request, allowOrigin, { rewrite: true, env, ldaBase: LDA_BASE });
   }
 
 
@@ -320,13 +320,13 @@ export async function handleLdaProxy(request, env) {
   const upstream = new URL(LDA_BASE + "/" + sub);
   upstream.search = url.search;
   applyLdaSmartParamRewrites(upstream);
-  return forward(upstream, request, allowOrigin, { rewrite: true, env });
+  return forward(upstream, request, allowOrigin, { rewrite: true, env, ldaBase: LDA_BASE });
 }
 
 
 /** Forward to upstream. Optionally rewrite JSON next/prev links using the request URL as seed. */
 async function forward(upstream, request, allowOrigin, opts = {}) {
-  const { rewrite = false, env = undefined } = opts;
+  const { rewrite = false, env = undefined, ldaBase = DEFAULT_LDA_BASE } = opts;
 
 
   const headers = new Headers();
@@ -378,7 +378,7 @@ async function forward(upstream, request, allowOrigin, opts = {}) {
 
 
   const requestUrl = new URL(request.url);
-  const body = rewrite ? rewritePayloadDeep(data, requestUrl.origin, requestUrl) : data;
+  const body = rewrite ? rewritePayloadDeep(data, requestUrl.origin, requestUrl, ldaBase) : data;
 
 
   return withCORS(
