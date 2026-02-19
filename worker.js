@@ -1,10 +1,9 @@
-
 import { json } from "./utils/http.js";
 import { corsPreflight, withCORS } from "./utils/cors.js";
 import { handleLdaProxy } from "./lda-proxy.js";
 import { handleLdaSummary } from "./lda-summary.js";
 
-async function routeRequest(request, env) {
+async function routeRequest(request, env, _ctx = undefined) {
   const originalUrl = new URL(request.url);
   let routedRequest = request;
   let pathname = originalUrl.pathname;
