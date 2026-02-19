@@ -1,8 +1,9 @@
-import { json } from "./utils/http.js";
+importimport { json } from "./utils/http.js";
 import { resolveAllowedOrigin } from "./utils/misc.js";
 import { lastNQuarters, yqToFilters, yqFromReport } from "./utils/time.js";
 import { fecNameVariants, normalizeCompanyInput } from "./utils/names.js";
 import { makeLdaClient } from "./clients/lda.js";
+import { LDA_BASE as DEFAULT_LDA_BASE } from "./config.js";
 import { reduceAmendments, aggregateLDA, getRegistrantName, getClientName } from "./aggregators/rollups.js";
 
 function extractLobbyistNames(detail){
@@ -36,7 +37,12 @@ export async function handleLdaSummary(request, env) {
 
   const qList = lastNQuarters(quartersN);
   const qSet = new Set(qList);
-  const lda = makeLdaClient({ LDA_KEY: env?.LDA_API_KEY || env?.LDA_KEY });
+  const LDA_BASE = env?.LDA_BASE || env?.LDA_BASE_URL || DEFAULT_LDA_BASE;
+  const lda = makeLdaClient({
+    LDA_KEY: env?.LDA_API_KEY || env?.LDA_KEY,
+    LDA_BASE,
+    timeoutMs: env?.LDA_TIMEOUT_MS
+  });
 
   const variants = fecNameVariants(normalizeCompanyInput(q))
     .map((s) => s.trim())
@@ -154,4 +160,3 @@ export async function handleLdaSummary(request, env) {
 
   return json(payload, 200, allowOrigin);
 }
-
