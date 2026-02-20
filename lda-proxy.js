@@ -294,27 +294,74 @@ function parseAmount(x) {
   const n = Number(String(x ?? "").replace(/[^0-9.-]/g, ""));
   return Number.isFinite(n) ? n : 0;
 }
+function flattenLd203Items(filingRows, yearFilter) {
+  const year = /^\d{4}$/.test(String(yearFilter || "")) ? String(yearFilter) : null;
+  const items = [];
 
+  for (const r of filingRows || []) {
+    const lobbyist = r?.lobbyist || {};
+    const lobbyist_name =
+      [lobbyist.first_name, lobbyist.middle_name, lobbyist.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim() || r?.lobbyist_name || null;
+
+    for (const item of r?.contribution_items || []) {
+      const tx = {
+        filing_uuid: r?.filing_uuid || r?.id || null,
+        filing_document_url: r?.filing_document_url || null,
+        dt_posted: r?.dt_posted || null,
+        filing_year: r?.filing_year || null,
+        registrant_name: r?.registrant?.name || r?.registrant_name || null,
+        lobbyist_name,
+        contribution_type: item?.contribution_type || item?.contribution_type_display || null,
+        contributor_name: item?.contributor_name || null,
+        payee_name: item?.payee_name || null,
+        honoree_name: item?.honoree_name || null,
+        amount: item?.amount || null,
+        date: item?.date || null,
+      };
+
+      if (year && !(String(tx.date || "").startsWith(`${year}-`))) continue;
+      items.push(tx);
+    }
+  }
+
+  return items;
+}
 
 function pickGroupName(row) {
-  return row?.payee_name || row?.payee || row?.honoree_name || row?.honoree || "UNKNOWN";
+    return row?.payee_name || row?.honoree_name || "UNKNOWN";
 }
 
 
-function pickFilingLink(row) {
-  if (row?.filing_detail_proxy) return row.filing_detail_proxy;
-  if (row?.filing_document_url) return row.filing_document_url;
-  if (row?.filing_uuid) return `/lda/filings/${row.filing_uuid}/`;
-  if (row?.filing?.uuid) return `/lda/filings/${row.filing.uuid}/`;
-  if (row?.filing_id) return `/lda/filings/${row.filing_id}/`;
+function pickAmount(row) {
+  return row?.amount;
+}
+
+
+function pickDate(row) {
+  return row?.date || null;
+}
+
+
+function pickFilingLink(row, requestUrl) {
+  if (row?.filing_document_url) {
+    try {
+      return new URL(row.filing_document_url, requestUrl.origin).toString();
+    } catch {
+      return row.filing_document_url;
+    }
+  }
+  if (row?.filing_uuid) return `${requestUrl.origin}/lda/filings/${row.filing_uuid}/`;
   return null;
 }
 
 
-function dedupeAndCountLinks(rows, maxLinks = 10) {
+function dedupeAndCountLinks(rows, requestUrl, maxLinks = 10) {
   const counts = new Map();
   for (const row of rows || []) {
-    const link = pickFilingLink(row);
+    const link = pickFilingLink(row, requestUrl);
     if (!link) continue;
     counts.set(link, (counts.get(link) || 0) + 1);
   }
@@ -328,17 +375,17 @@ function dedupeAndCountLinks(rows, maxLinks = 10) {
 }
 
 
-function aggregateLd203(rows) {
+function aggregateLd203(rows, requestUrl) {
   const groups = new Map();
   let total_amount = 0;
 
   for (const row of rows || []) {
     const display = pickGroupName(row);
     const normalized = normName(display);
-    const type = row?.type ? String(row.type) : "";
+    const type = row?.contribution_type ? String(row.contribution_type) : "";
     const key = type ? `${normalized}::${type}` : normalized;
-    const amount = parseAmount(row?.amount);
-    const txDate = row?.contribution_date || row?.date || null;
+    const amount = parseAmount(pickAmount(row));
+    const txDate = pickDate(row);
 
     total_amount += amount;
 
@@ -367,7 +414,7 @@ function aggregateLd203(rows) {
 
   const summarized = [...groups.values()]
     .map((group) => {
-      const links = dedupeAndCountLinks(group._rows, 10);
+      const links = dedupeAndCountLinks(group._rows, requestUrl, 10);
       return {
         key: group.key,
         payee_or_honoree: group.payee_or_honoree,
@@ -399,11 +446,20 @@ function getLdaAuthHeader(request, env) {
 }
 
 
-async function fetchLd203AllRows(request, env, ldaBase, requestUrl, maxRows = 20000, maxPages = 200) {
+async function fetchLd203AllRows(request, env, ldaBase, requestUrl, options = {}) {
+  const { maxRows = 20000, maxPages = 200, yearParam = null } = options;
   const authToken = getLdaAuthHeader(request, env);
   const seedUrl = new URL(requestUrl.toString());
   const initial = new URL(`${ldaBase}/contributions`);
   initial.search = requestUrl.search;
+   if (
+    /^\d{4}$/.test(String(yearParam || "")) &&
+    !hasMeaningfulParam(initial.searchParams, "contribution_date_after") &&
+    !hasMeaningfulParam(initial.searchParams, "contribution_date_before")
+  ) {
+    initial.searchParams.set("contribution_date_after", `${yearParam}-01-01`);
+    initial.searchParams.set("contribution_date_before", `${yearParam}-12-31`);
+  }
   applyLdaSmartParamRewrites(initial);
 
   const rows = [];
@@ -493,24 +549,25 @@ export async function handleLdaProxy(request, env) {
 
   if (/^ld203(\/|$)/i.test(sub)) {
     const mode = (url.searchParams.get("view") || "rollup").toLowerCase();
-
+    const yearParam = url.searchParams.get("contribution_year");
     // Preserve backward-compatible raw behavior by proxying upstream /contributions.
-    if (mode === "raw") {
+     if (mode === "raw") {
       const upstreamRaw = new URL(`${LDA_BASE}/contributions`);
       upstreamRaw.search = url.search;
       applyLdaSmartParamRewrites(upstreamRaw);
       return forward(upstreamRaw, request, allowOrigin, { rewrite: true, env, ldaBase: LDA_BASE });
     }
 
-    const { rows, warning, errorResp } = await fetchLd203AllRows(request, env, LDA_BASE, url);
+    const { rows, warning, errorResp } = await fetchLd203AllRows(request, env, LDA_BASE, url, { yearParam });
     if (errorResp) return withCORS(errorResp, allowOrigin);
-
+    const flattenedItems = flattenLd203Items(rows);
+    const keptItems = flattenLd203Items(rows, yearParam);
     const payeeFilter = url.searchParams.get("payee");
     const filteredRows = hasMeaningfulParam(url.searchParams, "payee")
-      ? rows.filter((row) => normName(pickGroupName(row)) === normName(payeeFilter))
-      : rows;
+      ? keptItems.filter((row) => normName(pickGroupName(row)) === normName(payeeFilter))
+      : keptItems;
 
-    const aggregated = aggregateLd203(filteredRows);
+    const aggregated = aggregateLd203(filteredRows, url);
     const body = {
       ok: true,
       view: "rollup",
@@ -521,14 +578,26 @@ export async function handleLdaProxy(request, env) {
         url.searchParams.get("contributor") ||
         url.searchParams.get("contributor_name") ||
         null,
-      contribution_year: url.searchParams.get("contribution_year") || null,
-      rows_scanned: rows.length,
+      contribution_year: yearParam || null,
+      rows_scanned: {
+        filings_scanned: rows.length,
+        items_scanned: flattenedItems.length,
+        items_kept: keptItems.length,
+      },
       groups_count: aggregated.groups_count,
       total_amount: aggregated.total_amount,
       groups: aggregated.groups,
     };
     if (warning) body.warning = warning;
-
+    if (url.searchParams.get("debug") === "1") {
+      body.debug = {
+        sample_filing: rows[0] || null,
+        sample_item: flattenedItems[0] || null,
+        keys_item: flattenedItems[0] ? Object.keys(flattenedItems[0]) : [],
+        year_param: yearParam || null,
+        year_filtering_removed_items: keptItems.length !== flattenedItems.length,
+      };
+    }
     return withCORS(new Response(JSON.stringify(body), { headers: jsonHeaders() }), allowOrigin);
   }
   const upstream = new URL(LDA_BASE + "/" + sub);
