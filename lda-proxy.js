@@ -281,6 +281,181 @@ function rewritePayloadDeep(node, proxyOrigin, seedUrl, ldaBase) {
   return node;
 }
 
+function normName(s) {
+  return String(s || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function parseAmount(x) {
+  const n = Number(String(x ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+
+function pickGroupName(row) {
+  return row?.payee_name || row?.payee || row?.honoree_name || row?.honoree || "UNKNOWN";
+}
+
+
+function pickFilingLink(row) {
+  if (row?.filing_detail_proxy) return row.filing_detail_proxy;
+  if (row?.filing_document_url) return row.filing_document_url;
+  if (row?.filing_uuid) return `/lda/filings/${row.filing_uuid}/`;
+  if (row?.filing?.uuid) return `/lda/filings/${row.filing.uuid}/`;
+  if (row?.filing_id) return `/lda/filings/${row.filing_id}/`;
+  return null;
+}
+
+
+function dedupeAndCountLinks(rows, maxLinks = 10) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    const link = pickFilingLink(row);
+    if (!link) continue;
+    counts.set(link, (counts.get(link) || 0) + 1);
+  }
+  const all = [...counts.entries()]
+    .map(([url, count]) => ({ url, count }))
+    .sort((a, b) => b.count - a.count || a.url.localeCompare(b.url));
+  return {
+    filing_links: all.slice(0, maxLinks),
+    filing_links_more: Math.max(0, all.length - maxLinks),
+  };
+}
+
+
+function aggregateLd203(rows) {
+  const groups = new Map();
+  let total_amount = 0;
+
+  for (const row of rows || []) {
+    const display = pickGroupName(row);
+    const normalized = normName(display);
+    const type = row?.type ? String(row.type) : "";
+    const key = type ? `${normalized}::${type}` : normalized;
+    const amount = parseAmount(row?.amount);
+    const txDate = row?.contribution_date || row?.date || null;
+
+    total_amount += amount;
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        payee_or_honoree: display,
+        type: type || undefined,
+        total_amount: 0,
+        tx_count: 0,
+        first_date: txDate || null,
+        last_date: txDate || null,
+        _rows: [],
+      });
+    }
+
+    const group = groups.get(key);
+    group.total_amount += amount;
+    group.tx_count += 1;
+    group._rows.push(row);
+    if (txDate) {
+      if (!group.first_date || txDate < group.first_date) group.first_date = txDate;
+      if (!group.last_date || txDate > group.last_date) group.last_date = txDate;
+    }
+  }
+
+  const summarized = [...groups.values()]
+    .map((group) => {
+      const links = dedupeAndCountLinks(group._rows, 10);
+      return {
+        key: group.key,
+        payee_or_honoree: group.payee_or_honoree,
+        type: group.type,
+        total_amount: Number(group.total_amount.toFixed(2)),
+        tx_count: group.tx_count,
+        first_date: group.first_date,
+        last_date: group.last_date,
+        filing_links: links.filing_links,
+        filing_links_more: links.filing_links_more,
+      };
+    })
+    .sort((a, b) => b.total_amount - a.total_amount || b.tx_count - a.tx_count);
+
+  return {
+    groups: summarized,
+    groups_count: summarized.length,
+    total_amount: Number(total_amount.toFixed(2)),
+  };
+}
+
+
+function getLdaAuthHeader(request, env) {
+  const LDA_KEY =
+    request.headers.get("x-lda-key") ||
+    request.headers.get("X-LDA-Key") ||
+    (env && (env["LDA_API_KEY"] || env["LDA_KEY"]));
+  return LDA_KEY ? `Token ${LDA_KEY}` : null;
+}
+
+
+async function fetchLd203AllRows(request, env, ldaBase, requestUrl, maxRows = 20000, maxPages = 200) {
+  const authToken = getLdaAuthHeader(request, env);
+  const seedUrl = new URL(requestUrl.toString());
+  const initial = new URL(`${ldaBase}/contributions`);
+  initial.search = requestUrl.search;
+  applyLdaSmartParamRewrites(initial);
+
+  const rows = [];
+  let pageCount = 0;
+  let nextUrl = initial;
+  let warning;
+
+  while (nextUrl && pageCount < maxPages && rows.length < maxRows) {
+    pageCount += 1;
+
+    const headers = new Headers({ Accept: "application/json" });
+    if (authToken) headers.set("Authorization", authToken);
+
+    const resp = await fetch(
+      new Request(nextUrl.toString(), {
+        method: "GET",
+        headers,
+        redirect: "follow",
+      })
+    );
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      return { errorResp: json(data, resp.status), rows: [] };
+    }
+
+    const pageRows = Array.isArray(data?.results) ? data.results : [];
+    const remaining = maxRows - rows.length;
+    rows.push(...pageRows.slice(0, remaining));
+
+    if (rows.length >= maxRows) {
+      warning = `Capped at max_rows=${maxRows}`;
+      break;
+    }
+
+    if (!data?.next) {
+      nextUrl = null;
+      break;
+    }
+
+    const parsedNext = new URL(data.next, `${ldaBase}/`);
+    carryForwardLdaFilters(parsedNext, seedUrl, parsedNext.pathname);
+    nextUrl = parsedNext;
+  }
+
+  if (!warning && nextUrl && pageCount >= maxPages) {
+    warning = `Capped at max_pages=${maxPages}`;
+  }
+
+  return { rows, warning, pageCount };
+}
+
 
 export async function handleLdaProxy(request, env) {
   const url = new URL(request.url);
@@ -316,7 +491,46 @@ export async function handleLdaProxy(request, env) {
     return json({ error: "Use /lda/summary at the Worker root." }, 400, allowOrigin);
   }
 
+  if (/^ld203(\/|$)/i.test(sub)) {
+    const mode = (url.searchParams.get("view") || "rollup").toLowerCase();
 
+    // Preserve backward-compatible raw behavior by proxying upstream /contributions.
+    if (mode === "raw") {
+      const upstreamRaw = new URL(`${LDA_BASE}/contributions`);
+      upstreamRaw.search = url.search;
+      applyLdaSmartParamRewrites(upstreamRaw);
+      return forward(upstreamRaw, request, allowOrigin, { rewrite: true, env, ldaBase: LDA_BASE });
+    }
+
+    const { rows, warning, errorResp } = await fetchLd203AllRows(request, env, LDA_BASE, url);
+    if (errorResp) return withCORS(errorResp, allowOrigin);
+
+    const payeeFilter = url.searchParams.get("payee");
+    const filteredRows = hasMeaningfulParam(url.searchParams, "payee")
+      ? rows.filter((row) => normName(pickGroupName(row)) === normName(payeeFilter))
+      : rows;
+
+    const aggregated = aggregateLd203(filteredRows);
+    const body = {
+      ok: true,
+      view: "rollup",
+      registrant:
+        url.searchParams.get("registrant") ||
+        url.searchParams.get("registrant_name") ||
+        url.searchParams.get("registrant_id") ||
+        url.searchParams.get("contributor") ||
+        url.searchParams.get("contributor_name") ||
+        null,
+      contribution_year: url.searchParams.get("contribution_year") || null,
+      rows_scanned: rows.length,
+      groups_count: aggregated.groups_count,
+      total_amount: aggregated.total_amount,
+      groups: aggregated.groups,
+    };
+    if (warning) body.warning = warning;
+
+    return withCORS(new Response(JSON.stringify(body), { headers: jsonHeaders() }), allowOrigin);
+  }
   const upstream = new URL(LDA_BASE + "/" + sub);
   upstream.search = url.search;
   applyLdaSmartParamRewrites(upstream);
@@ -334,11 +548,8 @@ async function forward(upstream, request, allowOrigin, opts = {}) {
 
 
   // Optional upstream auth
-  const LDA_KEY =
-    request.headers.get("x-lda-key") ||
-    request.headers.get("X-LDA-Key") ||
-    (env && (env["LDA_API_KEY"] || env["LDA_KEY"]));
-  if (LDA_KEY) headers.set("Authorization", `Token ${LDA_KEY}`);
+  const authToken = getLdaAuthHeader(request, env);
+  if (authToken) headers.set("Authorization", authToken);
 
 
   // Preserve body Content-Type on non-GET/HEAD
